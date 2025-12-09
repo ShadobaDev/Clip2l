@@ -17,12 +17,13 @@ def test_process_image():
         os.rmdir(output_dir)
 
     processor = ImageProcessor(width, height)
-    generated = processor.process_image(input_image, output_dir, 1)
+    generated, next_postfix = processor.process_image(input_image, output_dir, 1)
 
     print('Wygenerowane pliki:')
     for f in generated:
         print(f)
     assert all(os.path.exists(f) for f in generated), 'Nie wszystkie pliki zostały wygenerowane.'
+    assert isinstance(next_postfix, int) and next_postfix > 1, 'Nieprawidłowy next_postfix.'
     print('Test zakończony sukcesem.')
 
 if __name__ == '__main__':

@@ -33,3 +33,14 @@ python Clip2l.py -i input -o output -w 800 -h 1280
 - `Clip2l.py` — main CLI script
 - `image_processor/` — image processing module
 - `test/` — test scripts and sample images
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+You are free to use, modify, and distribute this software for any purpose (personal, educational, or commercial) without restrictions.
+
+## Dependencies
+
+All dependencies use permissive open-source licenses (MIT, Apache-2.0, BSD). Run `python -m piplicenses` to view the full license list.
+

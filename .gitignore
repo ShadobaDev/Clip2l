@@ -1,4 +1,5 @@
 image_processor/__pycache__
+__pycache__
 
 test/output/*
 test/007_1.png
@@ -12,3 +13,6 @@ test/user_test/input/*
 test/user_test/output/*
 !test/user_test/input/.dummy
 !test/user_test/output/.dummy
+
+# GUI experimental files (local development only)
+gui_simple.py

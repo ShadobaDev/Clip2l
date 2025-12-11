@@ -15,6 +15,38 @@ class ImageProcessor:
         self.target_width = target_width
         self.target_height = target_height
 
+    def image_convert(self, img: Image.Image, color_space: str = 'RGB', convert: bool = True) -> Image.Image:
+        """
+        Convert or normalize an image to a target color space.
+
+        Args:
+            img (PIL.Image.Image): Opened image instance.
+            color_space (str): Target color space name (e.g. 'RGB', 'RGBA', 'LA').
+            convert (bool): If False, returns a copy without converting.
+
+        Returns:
+            PIL.Image.Image: Converted image.
+        """
+        if not convert:
+            return img.copy()
+
+        # Target RGB: composite alpha/palette onto white background for stable output
+        if color_space.upper() == 'RGB':
+            if img.mode in ("RGBA", "LA") or (hasattr(img, "getbands") and 'A' in img.getbands()):
+                rgba = img.convert('RGBA')
+                background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
+                background.paste(rgba, mask=rgba.split()[3])
+                return background.convert('RGB')
+            if img.mode == 'P':
+                rgba = img.convert('RGBA')
+                background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
+                background.paste(rgba, mask=rgba.split()[3])
+                return background.convert('RGB')
+            return img.convert('RGB')
+
+        # Other explicit conversions
+        return img.convert(color_space)
+
     def process_image(self, image_path: str, output_dir: str, start_postfix: int) -> Tuple[List[str], int]:
         """
         Process a single image: resize and split if necessary.
@@ -31,22 +63,8 @@ class ImageProcessor:
         base_name = os.path.splitext(os.path.basename(image_path))[0]
         generated_files = []
         with Image.open(image_path) as img:
-            # Normalize image to RGB while preserving transparency where present.
-            # Handles modes like 'RGBA', 'LA', and palette 'P' correctly.
-            if img.mode in ("RGBA", "LA") or (hasattr(img, "getbands") and 'A' in img.getbands()):
-                # Convert to RGBA and composite on white background to remove alpha
-                rgba = img.convert('RGBA')
-                background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
-                background.paste(rgba, mask=rgba.split()[3])
-                img = background.convert('RGB')
-            elif img.mode == 'P':
-                # Paletted images -> convert to RGBA first to preserve transparency if any
-                rgba = img.convert('RGBA')
-                background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
-                background.paste(rgba, mask=rgba.split()[3])
-                img = background.convert('RGB')
-            else:
-                img = img.convert('RGB')
+            # Normalize/convert input image
+            img = self.image_convert(img, 'RGB', convert=True)
 
             aspect_ratio = img.width / img.height
             new_height = int(self.target_width / aspect_ratio)
@@ -100,30 +118,89 @@ class ImageProcessor:
         """
         os.makedirs(output_dir, exist_ok=True)
 
-        # Open, normalize and resize each image to target_width preserving aspect ratio
-        prepared_images = []
-        heights = []
+        # Process images one by one and stream output slices. We never hold more than
+        # the "carry" buffer plus the current image in memory.
+        prepared_iter = []
+        # We'll iterate through files and process immediately
+        generated_files = []
+        carry = None  # Image.Image or None, holds leftover piece smaller than target_height
+        postfix = start_postfix
+
+        def flush_carry_slices(carry_img, postfix_start):
+            """Yield (slice_img, postfix) for all full-size slices from carry_img."""
+            out = []
+            while carry_img is not None and carry_img.height >= self.target_height:
+                slice_img = carry_img.crop((0, 0, self.target_width, self.target_height))
+                out.append((slice_img, postfix_start))
+                postfix_start += 1
+                if carry_img.height == self.target_height:
+                    carry_img = None
+                else:
+                    carry_img = carry_img.crop((0, self.target_height, self.target_width, carry_img.height))
+            return out, carry_img, postfix_start
+
         for path in image_list:
             with Image.open(path) as im:
-                # reuse normalization logic
-                if im.mode in ("RGBA", "LA") or (hasattr(im, "getbands") and 'A' in im.getbands()):
-                    rgba = im.convert('RGBA')
-                    background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
-                    background.paste(rgba, mask=rgba.split()[3])
-                    im_rgb = background.convert('RGB')
-                elif im.mode == 'P':
-                    rgba = im.convert('RGBA')
-                    background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
-                    background.paste(rgba, mask=rgba.split()[3])
-                    im_rgb = background.convert('RGB')
-                else:
-                    im_rgb = im.convert('RGB')
-
+                im_rgb = self.image_convert(im, 'RGB', convert=True)
                 aspect_ratio = im_rgb.width / im_rgb.height
                 new_height = int(self.target_width / aspect_ratio)
-                resized = im_rgb.resize((self.target_width, new_height), Image.Resampling.LANCZOS)
-                prepared_images.append(resized)
-                heights.append(resized.height)
+                cur = im_rgb.resize((self.target_width, new_height), Image.Resampling.LANCZOS)
+
+                # If there's no carry, set cur as carry and flush full slices
+                if carry is None:
+                    carry = cur
+                    out_slices, carry, postfix = flush_carry_slices(carry, postfix)
+                    for s, p in out_slices:
+                        out_name = f"seq_{p:03d}.png"
+                        out_path = os.path.join(output_dir, out_name)
+                        s.save(out_path, 'PNG')
+                        generated_files.append(out_path)
+                    continue
+
+                # There is leftover (carry.height < target_height). Fill from cur
+                while carry is not None and carry.height < self.target_height and cur.height > 0:
+                    need = self.target_height - carry.height
+                    take_h = min(need, cur.height)
+                    top_piece = cur.crop((0, 0, self.target_width, take_h))
+                    # create combined slice
+                    combined = Image.new('RGB', (self.target_width, carry.height + take_h), (255, 255, 255))
+                    combined.paste(carry, (0, 0))
+                    combined.paste(top_piece, (0, carry.height))
+                    out_name = f"seq_{postfix:03d}.png"
+                    out_path = os.path.join(output_dir, out_name)
+                    combined.save(out_path, 'PNG')
+                    generated_files.append(out_path)
+                    postfix += 1
+
+                    # advance cur by take_h
+                    if take_h == cur.height:
+                        cur = None
+                        carry = None
+                        break
+                    else:
+                        cur = cur.crop((0, take_h, self.target_width, cur.height))
+                        # now cur may still have full slices; set carry to None and flush cur
+                        carry = None
+
+                # If cur still exists, flush full target_height slices from it
+                if cur is not None:
+                    out_slices, carry, postfix = flush_carry_slices(cur, postfix)
+                    for s, p in out_slices:
+                        out_name = f"seq_{p:03d}.png"
+                        out_path = os.path.join(output_dir, out_name)
+                        s.save(out_path, 'PNG')
+                        generated_files.append(out_path)
+                    # any remaining piece from cur becomes the new carry
+                    # flush_carry_slices returned residual in carry variable
+
+        # After all images processed, if carry remains (shorter than target), output it
+        if carry is not None and carry.height > 0:
+            out_name = f"seq_{postfix:03d}.png"
+            out_path = os.path.join(output_dir, out_name)
+            carry.save(out_path, 'PNG')
+            generated_files.append(out_path)
+
+        return generated_files
 
         # Create a single tall image by pasting each prepared image vertically
         total_height = sum(heights)

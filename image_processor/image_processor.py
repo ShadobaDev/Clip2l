@@ -84,6 +84,76 @@ class ImageProcessor:
             all_generated_files.extend(generated_files)
         return all_generated_files
 
+    def process_sequence_list(self, image_list: List[str], output_dir: str, start_postfix: int = 1) -> List[str]:
+        """
+        Process a sequence of images by concatenating them vertically and slicing across
+        image boundaries. This produces output images of `target_width` x `target_height`
+        that may contain parts of two adjacent source images when slices cross seams.
+
+        Args:
+            image_list (List[str]): Ordered list of image paths to concatenate
+            output_dir (str): Directory to save processed images
+            start_postfix (int): Starting postfix number for output files
+
+        Returns:
+            List[str]: List of generated file paths
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Open, normalize and resize each image to target_width preserving aspect ratio
+        prepared_images = []
+        heights = []
+        for path in image_list:
+            with Image.open(path) as im:
+                # reuse normalization logic
+                if im.mode in ("RGBA", "LA") or (hasattr(im, "getbands") and 'A' in im.getbands()):
+                    rgba = im.convert('RGBA')
+                    background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
+                    background.paste(rgba, mask=rgba.split()[3])
+                    im_rgb = background.convert('RGB')
+                elif im.mode == 'P':
+                    rgba = im.convert('RGBA')
+                    background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
+                    background.paste(rgba, mask=rgba.split()[3])
+                    im_rgb = background.convert('RGB')
+                else:
+                    im_rgb = im.convert('RGB')
+
+                aspect_ratio = im_rgb.width / im_rgb.height
+                new_height = int(self.target_width / aspect_ratio)
+                resized = im_rgb.resize((self.target_width, new_height), Image.Resampling.LANCZOS)
+                prepared_images.append(resized)
+                heights.append(resized.height)
+
+        # Create a single tall image by pasting each prepared image vertically
+        total_height = sum(heights)
+        if total_height == 0:
+            return []
+
+        concat = Image.new('RGB', (self.target_width, total_height), (255, 255, 255))
+        y = 0
+        for im in prepared_images:
+            concat.paste(im, (0, y))
+            y += im.height
+
+        # Slice the concatenated image into target_height strips
+        generated_files = []
+        num_slices = math.ceil(total_height / self.target_height)
+        for i in range(num_slices):
+            start_y = i * self.target_height
+            end_y = min(start_y + self.target_height, total_height)
+            slice_img = concat.crop((0, start_y, self.target_width, end_y))
+            postfix = start_postfix + i
+            # zero-padded postfix
+            output_filename = f"{postfix:03d}.png"
+            # use sequence naming: seq_<postfix> to avoid colliding with per-image naming
+            output_filename = f"seq_{postfix:03d}.png"
+            output_path = os.path.join(output_dir, output_filename)
+            slice_img.save(output_path, "PNG")
+            generated_files.append(output_path)
+
+        return generated_files
+
     def process_directory(self, input_dir: str, output_dir: str, 
                         file_types: tuple = ('.jpg', '.jpeg', '.png')) -> List[str]:
         """

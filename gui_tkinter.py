@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
 import os
 from pathlib import Path
+from PIL import Image, ImageTk
 from image_processor import ImageProcessor
 
 # Try to import sv_ttk theme; fall back gracefully if not available
@@ -20,13 +21,156 @@ except ImportError:
     HAS_SV_TTK = False
 
 
+class ReorderableImageList(ttk.Frame):
+    """Custom widget for displaying and reordering image files with thumbnails."""
+    
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.images = []  # list of (filepath, PhotoImage) tuples
+        self.photo_references = []  # keep references to PhotoImage objects
+        
+        # Create a canvas with scrollbar
+        self.canvas = tk.Canvas(self, bg="gray20", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        
+        self.canvas_window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        
+        self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        
+        # Bind mouse wheel to scroll (on entire widget)
+        self.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<Button-4>", self._on_mousewheel)
+        self.bind("<Button-5>", self._on_mousewheel)
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
+        self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-4>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-5>", self._on_mousewheel)
+    
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        if event.num == 5 or event.delta < 0:
+            self.canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.canvas.yview_scroll(-1, "units")
+    
+    def _bind_scroll_recursive(self, widget):
+        """Recursively bind mouse wheel events to widget and all its children."""
+        widget.bind("<MouseWheel>", self._on_mousewheel)
+        widget.bind("<Button-4>", self._on_mousewheel)
+        widget.bind("<Button-5>", self._on_mousewheel)
+        for child in widget.winfo_children():
+            self._bind_scroll_recursive(child)
+    
+    def add_image(self, filepath):
+        """Add an image file to the list."""
+        if filepath not in [img[0] for img in self.images]:
+            try:
+                # Create thumbnail (60x60)
+                img = Image.open(filepath)
+                img.thumbnail((60, 60), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.photo_references.append(photo)  # keep reference
+                self.images.append((filepath, photo))
+                self._redraw()
+            except Exception as e:
+                print(f"Error loading image {filepath}: {e}")
+    
+    def clear(self):
+        """Clear all images."""
+        self.images = []
+        self.photo_references = []
+        self._redraw()
+    
+    def get_image_list(self):
+        """Return list of image filepaths in current order."""
+        return [img[0] for img in self.images]
+    
+    def _move_up(self, index):
+        """Move image up in the list."""
+        if index > 0:
+            self.images[index], self.images[index - 1] = self.images[index - 1], self.images[index]
+            self._redraw()
+    
+    def _move_down(self, index):
+        """Move image down in the list."""
+        if index < len(self.images) - 1:
+            self.images[index], self.images[index + 1] = self.images[index + 1], self.images[index]
+            self._redraw()
+    
+    def _redraw(self):
+        """Redraw the list of images."""
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        
+        # Update scrollable_frame width to match canvas width
+        self.scrollable_frame.update_idletasks()
+        canvas_width = self.canvas.winfo_width()
+        if canvas_width > 1:  # avoid initial small value
+            self.canvas.itemconfig(self.canvas_window_id, width=canvas_width)
+        
+        for idx, (filepath, photo) in enumerate(self.images):
+            # Create frame for each image item (full width)
+            item_frame = ttk.Frame(self.scrollable_frame, relief=tk.SUNKEN, borderwidth=1)
+            item_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+            
+            # Thumbnail
+            img_label = tk.Label(item_frame, image=photo, bg="gray20")
+            img_label.pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Filename and path
+            filename = Path(filepath).name
+            info_frame = ttk.Frame(item_frame)
+            info_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            ttk.Label(info_frame, text=filename, font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            ttk.Label(info_frame, text=filepath, font=("Arial", 8), foreground="gray").pack(anchor=tk.W)
+            
+            # Buttons frame (up/down arrows) - fixed width, right-aligned
+            btn_frame = ttk.Frame(item_frame, width=80)
+            btn_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+            # btn_frame.pack_propagate(False)  # prevent frame from shrinking, commented beacuse of interference with button layout
+            
+            # Up button
+            if idx > 0:
+                btn_up = ttk.Button(btn_frame, text="↑", width=3,
+                                   command=lambda i=idx: self._move_up(i))
+                btn_up.pack(side=tk.LEFT, padx=2)
+            else:
+                btn_up_placeholder = ttk.Button(btn_frame, text="↑", width=3, state=tk.DISABLED)
+                btn_up_placeholder.pack(side=tk.LEFT, padx=2)
+            
+            # Down button
+            if idx < len(self.images) - 1:
+                btn_down = ttk.Button(btn_frame, text="↓", width=3,
+                                     command=lambda i=idx: self._move_down(i))
+                btn_down.pack(side=tk.LEFT, padx=2)
+            else:
+                btn_down_placeholder = ttk.Button(btn_frame, text="↓", width=3, state=tk.DISABLED)
+                btn_down_placeholder.pack(side=tk.LEFT, padx=2)
+        
+        # Bind scroll events to all newly created widgets
+        self._bind_scroll_recursive(self.scrollable_frame)
+
+
 class Clip2lGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Clip2l GUI — Batch Image Processor")
         self.root.geometry("750x700")
         self.processing = False
-        self.selected_files = []
 
         # Configure style with Sun Valley theme (or fall back to 'clam')
         style = ttk.Style()
@@ -48,12 +192,8 @@ class Clip2lGUI:
         # Input files section
         ttk.Label(main_frame, text="Input Images:", font=("Arial", 10, "bold")).grid(row=1, column=0, columnspan=3, sticky=tk.W)
         
-        self.files_listbox = tk.Listbox(main_frame, height=4, width=80)
-        self.files_listbox.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
-        
-        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.files_listbox.yview)
-        scrollbar.grid(row=2, column=3, sticky=(tk.N, tk.S))
-        self.files_listbox.config(yscrollcommand=scrollbar.set)
+        self.image_list = ReorderableImageList(main_frame, height=150)
+        self.image_list.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
 
         btn_add = ttk.Button(main_frame, text="Add Files", command=self.add_files)
         btn_add.grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
@@ -114,20 +254,15 @@ class Clip2lGUI:
             filetypes=[("Image files", "*.png *.jpg *.jpeg"), ("All files", "*.*")]
         )
         for f in files:
-            if f not in self.selected_files:
-                self.selected_files.append(f)
-        self.update_files_list()
+            self.image_list.add_image(f)
 
     def clear_files(self):
         """Clear the file list."""
-        self.selected_files = []
-        self.update_files_list()
+        self.image_list.clear()
 
     def update_files_list(self):
         """Update the listbox display."""
-        self.files_listbox.delete(0, tk.END)
-        for f in self.selected_files:
-            self.files_listbox.insert(tk.END, f)
+        pass  # No longer needed; handled by ReorderableImageList
 
     def browse_output(self):
         """Browse for output directory."""
@@ -149,7 +284,8 @@ class Clip2lGUI:
             messagebox.showwarning("Already Processing", "Processing is already in progress.")
             return
 
-        if not self.selected_files:
+        selected_files = self.image_list.get_image_list()
+        if not selected_files:
             messagebox.showerror("No Files", "Please select at least one image file.")
             return
 
@@ -171,7 +307,8 @@ class Clip2lGUI:
         os.makedirs(output_dir, exist_ok=True)
 
         # Log start
-        self.log(f"Starting processing: {len(self.selected_files)} file(s)")
+        self.log(f"+" + "-" * 60 + "+")
+        self.log(f"Starting processing: {len(selected_files)} file(s)")
         self.log(f"Mode: {'Sequence' if self.sequence_var.get() else 'Individual'}")
         self.log(f"Output: {output_dir}")
         self.log(f"Width: {width}, Height: {height}")
@@ -185,7 +322,7 @@ class Clip2lGUI:
         # Start worker thread
         thread = threading.Thread(
             target=self._process_images,
-            args=(self.selected_files, output_dir, width, height, self.sequence_var.get()),
+            args=(selected_files, output_dir, width, height, self.sequence_var.get()),
             daemon=True
         )
         thread.start()

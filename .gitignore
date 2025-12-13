@@ -14,5 +14,6 @@ test/user_test/output/*
 !test/user_test/input/.dummy
 !test/user_test/output/.dummy
 
+gui/
 # GUI experimental files (local development only)
 gui_simple.py

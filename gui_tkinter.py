@@ -12,6 +12,13 @@ import os
 from pathlib import Path
 from image_processor import ImageProcessor
 
+# Try to import sv_ttk theme; fall back gracefully if not available
+try:
+    import sv_ttk
+    HAS_SV_TTK = True
+except ImportError:
+    HAS_SV_TTK = False
+
 
 class Clip2lGUI:
     def __init__(self, root):
@@ -21,10 +28,13 @@ class Clip2lGUI:
         self.processing = False
         self.selected_files = []
 
-        # Configure style
+        # Configure style with Sun Valley theme (or fall back to 'clam')
         style = ttk.Style()
-        style.theme_use('clam')
-
+        if HAS_SV_TTK:
+            sv_ttk.set_theme("dark")  # use "dark" or "light" theme variant
+        else:
+            style.theme_use("clam")  # fallback theme if sv_ttk not available
+        
         # Main frame
         main_frame = ttk.Frame(root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))

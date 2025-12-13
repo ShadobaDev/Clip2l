@@ -42,6 +42,9 @@ class ReorderableImageList(ttk.Frame):
         self.canvas_window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=scrollbar.set)
         
+        # Bind canvas resize to update scrollable_frame width
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        
         self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         
@@ -59,6 +62,11 @@ class ReorderableImageList(ttk.Frame):
         self.scrollable_frame.bind("<Button-4>", self._on_mousewheel)
         self.scrollable_frame.bind("<Button-5>", self._on_mousewheel)
     
+    def _on_canvas_resize(self, event):
+        """Update scrollable_frame width to match canvas width."""
+        canvas_width = event.width
+        self.canvas.itemconfig(self.canvas_window_id, width=canvas_width)
+        
     def _on_mousewheel(self, event):
         """Handle mouse wheel scrolling."""
         if event.num == 5 or event.delta < 0:
@@ -169,20 +177,20 @@ class ReorderableImageList(ttk.Frame):
             
             # Up button
             if idx > 0:
-                btn_up = ttk.Button(btn_frame, text="↑", width=3,
+                btn_up = ttk.Button(btn_frame, text="ᐃ", width=3,
                                    command=lambda i=idx: self._move_up(i))
                 btn_up.pack(side=tk.LEFT, padx=2)
             else:
-                btn_up_placeholder = ttk.Button(btn_frame, text="↑", width=3, state=tk.DISABLED)
+                btn_up_placeholder = ttk.Button(btn_frame, text="ᐃ", width=3, state=tk.DISABLED)
                 btn_up_placeholder.pack(side=tk.LEFT, padx=2)
             
             # Down button
             if idx < len(self.images) - 1:
-                btn_down = ttk.Button(btn_frame, text="↓", width=3,
+                btn_down = ttk.Button(btn_frame, text="ᐁ", width=3,
                                      command=lambda i=idx: self._move_down(i))
                 btn_down.pack(side=tk.LEFT, padx=2)
             else:
-                btn_down_placeholder = ttk.Button(btn_frame, text="↓", width=3, state=tk.DISABLED)
+                btn_down_placeholder = ttk.Button(btn_frame, text="ᐁ", width=3, state=tk.DISABLED)
                 btn_down_placeholder.pack(side=tk.LEFT, padx=2)
         
         # Bind scroll events to all newly created widgets
@@ -263,7 +271,7 @@ class Clip2lGUI:
         self.height_var = tk.StringVar(value="1280")
         ttk.Entry(main_frame, textvariable=self.height_var, width=10).grid(row=8, column=1, sticky=tk.W)
 
-        self.sequence_var = tk.BooleanVar(value=False)
+        self.sequence_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(main_frame, text="Sequence Mode (concatenate & slice across images)", 
                         variable=self.sequence_var).grid(row=9, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 

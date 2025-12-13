@@ -98,6 +98,30 @@ class ReorderableImageList(ttk.Frame):
         """Return list of image filepaths in current order."""
         return [img[0] for img in self.images]
     
+    def reverse(self):
+        """Reverse the order of images."""
+        self.images.reverse()
+        self._redraw()
+    
+    def sort_by(self, sort_type: str):
+        """
+        Sort images by specified criteria.
+        
+        Args:
+            sort_type (str): 'name', 'modified', or 'created'
+        """
+        import os
+        from datetime import datetime
+        
+        if sort_type == "name":
+            self.images.sort(key=lambda x: os.path.basename(x[0]))
+        elif sort_type == "modified":
+            self.images.sort(key=lambda x: os.path.getmtime(x[0]))
+        elif sort_type == "created":
+            # Windows: creation time; Unix: use birthtime if available, else modified
+            self.images.sort(key=lambda x: os.path.getctime(x[0]))
+        self._redraw()
+    
     def _move_up(self, index):
         """Move image up in the list."""
         if index > 0:
@@ -195,10 +219,29 @@ class Clip2lGUI:
         self.image_list = ReorderableImageList(main_frame, height=150)
         self.image_list.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
 
-        btn_add = ttk.Button(main_frame, text="Add Files", command=self.add_files)
-        btn_add.grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
-        btn_clear = ttk.Button(main_frame, text="Clear List", command=self.clear_files)
-        btn_clear.grid(row=3, column=1, sticky=tk.W)
+        # Toolbar for image list
+        toolbar_frame = ttk.Frame(main_frame)
+        toolbar_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        
+        btn_add = ttk.Button(toolbar_frame, text="Add Files", command=self.add_files)
+        btn_add.pack(side=tk.LEFT, padx=(0, 5))
+        
+        btn_clear = ttk.Button(toolbar_frame, text="Clear List", command=self.clear_files)
+        btn_clear.pack(side=tk.LEFT, padx=(0, 5))
+        
+        btn_reverse = ttk.Button(toolbar_frame, text="Reverse Order", command=self.reverse_order)
+        btn_reverse.pack(side=tk.LEFT, padx=(0, 5))
+        
+        ttk.Label(toolbar_frame, text="Sort By:").pack(side=tk.LEFT, padx=(10, 5))
+        
+        self.sort_var = tk.StringVar(value="name")
+        sort_combo = ttk.Combobox(toolbar_frame, textvariable=self.sort_var, 
+                                  values=["name", "modified", "created"], 
+                                  state="readonly", width=12)
+        sort_combo.pack(side=tk.LEFT, padx=(0, 5))
+        
+        btn_sort = ttk.Button(toolbar_frame, text="Sort", command=self.sort_images)
+        btn_sort.pack(side=tk.LEFT)
 
         # Output directory section
         ttk.Label(main_frame, text="Output Directory:", font=("Arial", 10, "bold")).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(10, 5))
@@ -253,12 +296,22 @@ class Clip2lGUI:
             title="Select image files",
             filetypes=[("Image files", "*.png *.jpg *.jpeg"), ("All files", "*.*")]
         )
-        for f in files:
+        # Reverse the order so the list displays top-to-bottom in chronological/logical order
+        for f in reversed(files):
             self.image_list.add_image(f)
 
     def clear_files(self):
         """Clear the file list."""
         self.image_list.clear()
+
+    def reverse_order(self):
+        """Reverse the order of images in the list."""
+        self.image_list.reverse()
+
+    def sort_images(self):
+        """Sort images by selected criteria."""
+        sort_by = self.sort_var.get()
+        self.image_list.sort_by(sort_by)
 
     def update_files_list(self):
         """Update the listbox display."""

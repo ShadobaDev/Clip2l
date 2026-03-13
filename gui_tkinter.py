@@ -142,6 +142,13 @@ class ReorderableImageList(ttk.Frame):
             self.images[index], self.images[index + 1] = self.images[index + 1], self.images[index]
             self._redraw()
     
+    def _remove_image(self, index):
+        """Remove image from the list."""
+        if 0 <= index < len(self.images):
+            self.images.pop(index)
+            self.photo_references.pop(index)
+            self._redraw()
+    
     def _redraw(self):
         """Redraw the list of images."""
         for widget in self.scrollable_frame.winfo_children():
@@ -192,17 +199,28 @@ class ReorderableImageList(ttk.Frame):
             else:
                 btn_down_placeholder = ttk.Button(btn_frame, text="ᐁ", width=3, state=tk.DISABLED)
                 btn_down_placeholder.pack(side=tk.LEFT, padx=2)
+            
+            # Delete button
+            btn_delete = ttk.Button(btn_frame, text="✕", width=3,
+                                   command=lambda i=idx: self._remove_image(i))
+            btn_delete.pack(side=tk.LEFT, padx=2)
         
         # Bind scroll events to all newly created widgets
         self._bind_scroll_recursive(self.scrollable_frame)
 
 
 class Clip2lGUI:
+    # Spinner frames for animation
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    
     def __init__(self, root):
         self.root = root
         self.root.title("Clip2l GUI — Batch Image Processor")
         self.root.geometry("750x700")
         self.processing = False
+        self.spinner_running = False
+        self.spinner_thread = None
+        self.spinner_index = 0
 
         # Configure style with Sun Valley theme (or fall back to 'clam')
         style = ttk.Style()
@@ -277,7 +295,7 @@ class Clip2lGUI:
 
         # Buttons
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.grid(row=10, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 5))
+        btn_frame.grid(row=10, column=0, sticky=(tk.W), pady=(10, 3))
 
         self.btn_generate = ttk.Button(btn_frame, text="Generate", command=self.generate)
         self.btn_generate.pack(side=tk.LEFT, padx=(0, 5))
@@ -287,6 +305,16 @@ class Clip2lGUI:
 
         btn_exit = ttk.Button(btn_frame, text="Exit", command=root.quit)
         btn_exit.pack(side=tk.LEFT)
+
+        # Status frame with spinner (same row, stretches to the right)
+        self.status_frame = ttk.Frame(main_frame, relief=tk.SUNKEN, borderwidth=1)
+        self.status_frame.grid(row=10, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 3), padx=(5, 0))
+        
+        self.spinner_label = tk.Label(self.status_frame, text="⠿", font=("Arial", 12, "bold"), fg="cyan")
+        self.spinner_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        self.status_label = tk.Label(self.status_frame, text="Ready", font=("Arial", 10))
+        self.status_label.pack(side=tk.LEFT, padx=5, pady=5)
 
         # Output log
         ttk.Label(main_frame, text="Log Output:", font=("Arial", 10, "bold")).grid(row=11, column=0, columnspan=3, sticky=tk.W, pady=(10, 5))
@@ -304,9 +332,22 @@ class Clip2lGUI:
             title="Select image files",
             filetypes=[("Image files", "*.png *.jpg *.jpeg"), ("All files", "*.*")]
         )
-        # Reverse the order so the list displays top-to-bottom in chronological/logical order
-        for f in reversed(files):
-            self.image_list.add_image(f)
+        if files:
+            # Start spinner
+            self._start_spinner(f"Loading {len(files)} file(s)...")
+            
+            # Load files in a separate thread
+            thread = threading.Thread(target=self._load_files_worker, args=(files,), daemon=True)
+            thread.start()
+    
+    def _load_files_worker(self, files):
+        """Worker thread to load files."""
+        try:
+            # Reverse the order so the list displays top-to-bottom in chronological/logical order
+            for f in reversed(files):
+                self.image_list.add_image(f)
+        finally:
+            self._stop_spinner("Ready")
 
     def clear_files(self):
         """Clear the file list."""
@@ -338,6 +379,38 @@ class Clip2lGUI:
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
         self.root.update()
+    
+    def _start_spinner(self, status_message):
+        """Start spinner animation with status message."""
+        self.spinner_running = True
+        self.status_label.config(text=status_message)
+        self.spinner_index = 0
+        
+        # Start spinner in a separate thread
+        self.spinner_thread = threading.Thread(target=self._animate_spinner, daemon=True)
+        self.spinner_thread.start()
+    
+    def _animate_spinner(self):
+        """Animate the spinner."""
+        while self.spinner_running:
+            frame = self.SPINNER_FRAMES[self.spinner_index % len(self.SPINNER_FRAMES)]
+            try:
+                self.spinner_label.config(text=frame)
+            except:
+                pass  # window might be closed
+            self.spinner_index += 1
+            threading.Event().wait(0.1)  # 100ms between frames
+    
+    def _stop_spinner(self, final_message="Ready"):
+        """Stop spinner animation."""
+        self.spinner_running = False
+        try:
+            self.spinner_label.config(text="⠿")
+            self.status_label.config(text=final_message)
+        except:
+            pass  # window might be closed
+        if self.spinner_thread:
+            self.spinner_thread.join(timeout=1)
 
     def generate(self):
         """Start image processing in a worker thread."""
@@ -379,6 +452,9 @@ class Clip2lGUI:
         self.processing = True
         self.btn_generate.config(state=tk.DISABLED)
         self.btn_cancel.config(state=tk.NORMAL)
+        
+        # Start spinner
+        self._start_spinner("Generating...")
 
         # Start worker thread
         thread = threading.Thread(
@@ -407,6 +483,8 @@ class Clip2lGUI:
             self.btn_generate.config(state=tk.NORMAL)
             self.btn_cancel.config(state=tk.DISABLED)
             
+            self._stop_spinner("Done!")
+            
             messagebox.showinfo("Success", f"Processing complete!\nGenerated {len(generated)} file(s).")
         except Exception as e:
             self.log("")
@@ -414,6 +492,9 @@ class Clip2lGUI:
             self.processing = False
             self.btn_generate.config(state=tk.NORMAL)
             self.btn_cancel.config(state=tk.DISABLED)
+            
+            self._stop_spinner("Error!")
+            
             messagebox.showerror("Processing Error", str(e))
 
     def cancel(self):

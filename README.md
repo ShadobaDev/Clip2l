@@ -31,7 +31,7 @@ python Clip2l.py -i input -o output -w 800 -H 1280
 # Process images from a list file with custom dimensions
 python Clip2l.py -l images.txt -o output -w 1024 -H 1536
 
-# Process as sequence (images are concatenated vertically then sliced)
+# Process as sequence (image slices are concatenated vertically to match requested height)
 python Clip2l.py -i input -o output -w 800 -H 1280 -s
 ```
 

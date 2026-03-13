@@ -201,7 +201,7 @@ class ReorderableImageList(ttk.Frame):
                 btn_down_placeholder.pack(side=tk.LEFT, padx=2)
             
             # Delete button
-            btn_delete = ttk.Button(btn_frame, text="✕", width=3,
+            btn_delete = ttk.Button(btn_frame, text="⨉", width=3,
                                    command=lambda i=idx: self._remove_image(i))
             btn_delete.pack(side=tk.LEFT, padx=2)
         

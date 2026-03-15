@@ -405,8 +405,7 @@ class Clip2lGUI:
         """Worker thread to load files."""
         try:
             # Preserve the file order from user selection / sort, top-to-bottom.
-            for f in files:
-                self.image_list.add_image(f)
+            self.image_list.add_images(files)
         finally:
             self._stop_spinner("Ready")
 

@@ -4,16 +4,28 @@ from typing import List, Tuple, Optional
 import math
 
 class ImageProcessor:
-    def __init__(self, target_width: int, target_height: int):
+    def __init__(self, target_width: int, target_height: int, output_format: str = 'png',
+                 jpeg_quality: int = 90, jpeg_subsampling: int = 0,
+                 jpeg_optimize: bool = True, jpeg_progressive: bool = False):
         """
         Initialize the image processor with target dimensions.
         
         Args:
             target_width (int): The target width for the output images
             target_height (int): The maximum height for each output image slice
+            output_format (str): Output image format (png, jpg, jpeg, webp)
+            jpeg_quality (int): JPEG quality (1-95, 95 max in Pillow)
+            jpeg_subsampling (int): JPEG subsampling (0=4:4:4,1=4:2:2,2=4:2:0)
+            jpeg_optimize (bool): Use Pillow JPEG optimization
+            jpeg_progressive (bool): Save JPEG as progressive
         """
         self.target_width = target_width
         self.target_height = target_height
+        self.output_format = output_format.lower().lstrip('.')
+        self.jpeg_quality = max(1, min(95, jpeg_quality))
+        self.jpeg_subsampling = jpeg_subsampling if jpeg_subsampling in (0, 1, 2) else 0
+        self.jpeg_optimize = jpeg_optimize
+        self.jpeg_progressive = jpeg_progressive
 
     def image_convert(self, img: Image.Image, color_space: str = 'RGB', convert: bool = True) -> Image.Image:
         """
@@ -47,7 +59,17 @@ class ImageProcessor:
         # Other explicit conversions
         return img.convert(color_space)
 
-    def process_image(self, image_path: str, output_dir: str, start_postfix: int) -> Tuple[List[str], int]:
+    def _jpeg_save_kwargs(self) -> dict:
+        """Return JPEG save kwargs based on processor settings."""
+        return {
+            'quality': self.jpeg_quality,
+            'subsampling': self.jpeg_subsampling,
+            'optimize': self.jpeg_optimize,
+            'progressive': self.jpeg_progressive,
+        }
+
+    def process_image(self, image_path: str, output_dir: str, start_postfix: int,
+                      output_format: Optional[str] = None) -> Tuple[List[str], int]:
         """
         Process a single image: resize and split if necessary.
         
@@ -55,6 +77,7 @@ class ImageProcessor:
             image_path (str): Path to the input image
             output_dir (str): Directory to save processed images
             start_postfix (int): Starting postfix number for output files
+            output_format (str, optional): Target output image format
 
         Returns:
             Tuple[List[str], int]: (generated file paths, next postfix number)
@@ -62,6 +85,21 @@ class ImageProcessor:
         os.makedirs(output_dir, exist_ok=True)
         base_name = os.path.splitext(os.path.basename(image_path))[0]
         generated_files = []
+
+        # Determine format and Pillow save format
+        fmt = (output_format or self.output_format or 'png').lower().lstrip('.')
+        if fmt in ('jpg', 'jpeg'):
+            save_format = 'JPEG'
+            fmt_ext = 'jpg'
+        elif fmt == 'png':
+            save_format = 'PNG'
+            fmt_ext = 'png'
+        elif fmt == 'webp':
+            save_format = 'WEBP'
+            fmt_ext = 'webp'
+        else:
+            raise ValueError(f"Unsupported output format: {output_format or self.output_format}")
+
         with Image.open(image_path) as img:
             # Normalize/convert input image
             img = self.image_convert(img, 'RGB', convert=True)
@@ -74,23 +112,23 @@ class ImageProcessor:
                 start_y = i * self.target_height
                 end_y = min(start_y + self.target_height, new_height)
                 slice_img = resized_img.crop((0, start_y, self.target_width, end_y))
-                # Use a postfix (suffix) for numbering and increment for each output file
                 postfix = start_postfix + i
-                output_filename = f"{base_name}_{postfix:03d}.png"
+                output_filename = f"{base_name}_{postfix:03d}.{fmt_ext}"
                 output_path = os.path.join(output_dir, output_filename)
-                slice_img.save(output_path, "PNG")
+                save_kwargs = self._jpeg_save_kwargs() if save_format == 'JPEG' else {}
+                slice_img.save(output_path, save_format, **save_kwargs)
                 generated_files.append(output_path)
-        # Return generated file paths and the next postfix to use
         next_postfix = start_postfix + len(generated_files)
         return generated_files, next_postfix
 
-    def process_image_list(self, image_list: List[str], output_dir: str) -> List[str]:
+    def process_image_list(self, image_list: List[str], output_dir: str, output_format: Optional[str] = None) -> List[str]:
         """
         Process multiple images from a list of file paths.
         
         Args:
             image_list (List[str]): List of paths to input images
             output_dir (str): Directory to save processed images
+            output_format (str, optional): Target output image format
             
         Returns:
             List[str]: List of all generated image paths
@@ -98,11 +136,12 @@ class ImageProcessor:
         all_generated_files = []
         postfix_counter = 1
         for image_path in image_list:
-            generated_files, postfix_counter = self.process_image(image_path, output_dir, postfix_counter)
+            generated_files, postfix_counter = self.process_image(image_path, output_dir, postfix_counter, output_format=output_format)
             all_generated_files.extend(generated_files)
         return all_generated_files
 
-    def process_sequence_list(self, image_list: List[str], output_dir: str, start_postfix: int = 1) -> List[str]:
+    def process_sequence_list(self, image_list: List[str], output_dir: str, start_postfix: int = 1,
+                              output_format: Optional[str] = None) -> List[str]:
         """
         Process a sequence of images by concatenating them vertically and slicing across
         image boundaries. This produces output images of `target_width` x `target_height`
@@ -112,11 +151,25 @@ class ImageProcessor:
             image_list (List[str]): Ordered list of image paths to concatenate
             output_dir (str): Directory to save processed images
             start_postfix (int): Starting postfix number for output files
+            output_format (str, optional): Target output image format
 
         Returns:
             List[str]: List of generated file paths
         """
         os.makedirs(output_dir, exist_ok=True)
+
+        fmt = (output_format or self.output_format or 'png').lower().lstrip('.')
+        if fmt in ('jpg', 'jpeg'):
+            save_format = 'JPEG'
+            ext = 'jpg'
+        elif fmt == 'png':
+            save_format = 'PNG'
+            ext = 'png'
+        elif fmt == 'webp':
+            save_format = 'WEBP'
+            ext = 'webp'
+        else:
+            raise ValueError(f"Unsupported output format: {output_format or self.output_format}")
 
         # Process images one by one and stream output slices. We never hold more than
         # the "carry" buffer plus the current image in memory.
@@ -151,9 +204,10 @@ class ImageProcessor:
                     carry = cur
                     out_slices, carry, postfix = flush_carry_slices(carry, postfix)
                     for s, p in out_slices:
-                        out_name = f"seq_{p:03d}.png"
+                        out_name = f"seq_{p:03d}.{ext}"
                         out_path = os.path.join(output_dir, out_name)
-                        s.save(out_path, 'PNG')
+                        save_kwargs = self._jpeg_save_kwargs() if save_format == 'JPEG' else {}
+                        s.save(out_path, save_format, **save_kwargs)
                         generated_files.append(out_path)
                     continue
 
@@ -166,9 +220,10 @@ class ImageProcessor:
                     combined = Image.new('RGB', (self.target_width, carry.height + take_h), (255, 255, 255))
                     combined.paste(carry, (0, 0))
                     combined.paste(top_piece, (0, carry.height))
-                    out_name = f"seq_{postfix:03d}.png"
+                    out_name = f"seq_{postfix:03d}.{ext}"
                     out_path = os.path.join(output_dir, out_name)
-                    combined.save(out_path, 'PNG')
+                    save_kwargs = self._jpeg_save_kwargs() if save_format == 'JPEG' else {}
+                    combined.save(out_path, save_format, **save_kwargs)
                     generated_files.append(out_path)
                     postfix += 1
 
@@ -186,18 +241,20 @@ class ImageProcessor:
                 if cur is not None:
                     out_slices, carry, postfix = flush_carry_slices(cur, postfix)
                     for s, p in out_slices:
-                        out_name = f"seq_{p:03d}.png"
+                        out_name = f"seq_{p:03d}.{ext}"
                         out_path = os.path.join(output_dir, out_name)
-                        s.save(out_path, 'PNG')
+                        save_kwargs = self._jpeg_save_kwargs() if save_format == 'JPEG' else {}
+                        s.save(out_path, save_format, **save_kwargs)
                         generated_files.append(out_path)
                     # any remaining piece from cur becomes the new carry
                     # flush_carry_slices returned residual in carry variable
 
         # After all images processed, if carry remains (shorter than target), output it
         if carry is not None and carry.height > 0:
-            out_name = f"seq_{postfix:03d}.png"
+            out_name = f"seq_{postfix:03d}.{ext}"
             out_path = os.path.join(output_dir, out_name)
-            carry.save(out_path, 'PNG')
+            save_kwargs = self._jpeg_save_kwargs() if save_format == 'JPEG' else {}
+            carry.save(out_path, save_format, **save_kwargs)
             generated_files.append(out_path)
 
         return generated_files
@@ -231,8 +288,9 @@ class ImageProcessor:
 
         return generated_files
 
-    def process_directory(self, input_dir: str, output_dir: str, 
-                        file_types: tuple = ('.jpg', '.jpeg', '.png')) -> List[str]:
+    def process_directory(self, input_dir: str, output_dir: str,
+                        file_types: tuple = ('.jpg', '.jpeg', '.png'),
+                        output_format: Optional[str] = None) -> List[str]:
         """
         Process all images in a directory.
         
@@ -240,6 +298,7 @@ class ImageProcessor:
             input_dir (str): Directory containing input images
             output_dir (str): Directory to save processed images
             file_types (tuple): Tuple of accepted file extensions
+            output_format (str, optional): Target output image format
             
         Returns:
             List[str]: List of all generated image paths
@@ -250,4 +309,4 @@ class ImageProcessor:
             if filename.lower().endswith(file_types):
                 image_files.append(os.path.join(input_dir, filename))
                 
-        return self.process_image_list(image_files, output_dir)
+        return self.process_image_list(image_files, output_dir, output_format=output_format)

@@ -95,6 +95,28 @@ class ReorderableImageList(ttk.Frame):
                 self._redraw()
             except Exception as e:
                 print(f"Error loading image {filepath}: {e}")
+
+    def add_images(self, filepaths):
+        """Add multiple image files to the list in one update."""
+        existing_paths = {img[0] for img in self.images}
+        new_items = []
+
+        for filepath in filepaths:
+            if filepath in existing_paths:
+                continue
+            try:
+                img = Image.open(filepath)
+                img.thumbnail((60, 60), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.photo_references.append(photo)
+                new_items.append((filepath, photo))
+                existing_paths.add(filepath)
+            except Exception as e:
+                print(f"Error loading image {filepath}: {e}")
+
+        if new_items:
+            self.images.extend(new_items)
+            self._redraw()
     
     def clear(self):
         """Clear all images."""
@@ -289,13 +311,52 @@ class Clip2lGUI:
         self.height_var = tk.StringVar(value="1280")
         ttk.Entry(main_frame, textvariable=self.height_var, width=10).grid(row=8, column=1, sticky=tk.W)
 
+        ttk.Label(main_frame, text="Output Format:").grid(row=9, column=0, sticky=tk.W)
+        self.format_var = tk.StringVar(value="png")
+        format_combo = ttk.Combobox(main_frame, textvariable=self.format_var,
+                                     values=["png", "jpg", "jpeg", "webp"],
+                                     state="readonly", width=8)
+        format_combo.grid(row=9, column=1, sticky=tk.W)
+
+        # JPEG options: visible only when format is jpg/jpeg
+        self.jpeg_options_frame = ttk.Frame(main_frame)
+        self.jpeg_options_frame.grid(row=10, column=0, columnspan=2, sticky=tk.W, padx=(20,0), pady=(4,4))
+
+        ttk.Label(self.jpeg_options_frame, text="JPEG Quality:").grid(row=0, column=0, sticky=tk.W)
+        self.jpeg_quality_var = tk.IntVar(value=90)
+        jpeg_quality_spin = ttk.Spinbox(self.jpeg_options_frame, from_=50, to=95, increment=1, textvariable=self.jpeg_quality_var, width=8)
+        jpeg_quality_spin.grid(row=0, column=1, sticky=tk.W)
+
+        ttk.Label(self.jpeg_options_frame, text="JPEG Subsampling:").grid(row=1, column=0, sticky=tk.W)
+        self.jpeg_subsampling_var = tk.StringVar(value="0")
+        jpeg_subsampling_combo = ttk.Combobox(self.jpeg_options_frame, textvariable=self.jpeg_subsampling_var,
+                                              values=["0", "1", "2"], state="readonly", width=8)
+        jpeg_subsampling_combo.grid(row=1, column=1, sticky=tk.W)
+
+        self.jpeg_optimize_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self.jpeg_options_frame, text="JPEG optimize", variable=self.jpeg_optimize_var).grid(row=2, column=0, columnspan=2, sticky=tk.W)
+
+        self.jpeg_progressive_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self.jpeg_options_frame, text="JPEG progressive", variable=self.jpeg_progressive_var).grid(row=3, column=0, columnspan=2, sticky=tk.W)
+
         self.sequence_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(main_frame, text="Sequence Mode (concatenate & slice across images)", 
-                        variable=self.sequence_var).grid(row=9, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+                        variable=self.sequence_var).grid(row=14, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+
+        # Visibility logic based on format selection
+        def update_jpeg_options(*_):
+            fmt = self.format_var.get().lower()
+            if fmt in ("jpg", "jpeg"):
+                self.jpeg_options_frame.grid()
+            else:
+                self.jpeg_options_frame.grid_remove()
+
+        self.format_var.trace_add("write", update_jpeg_options)
+        update_jpeg_options()
 
         # Buttons
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.grid(row=10, column=0, sticky=(tk.W), pady=(10, 3))
+        btn_frame.grid(row=15, column=0, sticky=(tk.W), pady=(10, 3))
 
         self.btn_generate = ttk.Button(btn_frame, text="Generate", command=self.generate)
         self.btn_generate.pack(side=tk.LEFT, padx=(0, 5))
@@ -308,7 +369,7 @@ class Clip2lGUI:
 
         # Status frame with spinner (same row, stretches to the right)
         self.status_frame = ttk.Frame(main_frame, relief=tk.SUNKEN, borderwidth=1)
-        self.status_frame.grid(row=10, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 3), padx=(5, 0))
+        self.status_frame.grid(row=15, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 3), padx=(5, 0))
         
         self.spinner_label = tk.Label(self.status_frame, text="⠿", font=("Arial", 12, "bold"), fg="cyan")
         self.spinner_label.pack(side=tk.LEFT, padx=10, pady=5)
@@ -317,14 +378,14 @@ class Clip2lGUI:
         self.status_label.pack(side=tk.LEFT, padx=5, pady=5)
 
         # Output log
-        ttk.Label(main_frame, text="Log Output:", font=("Arial", 10, "bold")).grid(row=11, column=0, columnspan=3, sticky=tk.W, pady=(10, 5))
+        ttk.Label(main_frame, text="Log Output:", font=("Arial", 10, "bold")).grid(row=16, column=0, columnspan=3, sticky=tk.W, pady=(10, 5))
         
         self.log_text = scrolledtext.ScrolledText(main_frame, height=12, width=80, state=tk.DISABLED)
-        self.log_text.grid(row=12, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        self.log_text.grid(row=17, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
 
         # Configure grid weights for resizing
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(12, weight=1)
+        main_frame.rowconfigure(17, weight=1)
 
     def add_files(self):
         """Add files to the list."""
@@ -343,8 +404,8 @@ class Clip2lGUI:
     def _load_files_worker(self, files):
         """Worker thread to load files."""
         try:
-            # Reverse the order so the list displays top-to-bottom in chronological/logical order
-            for f in reversed(files):
+            # Preserve the file order from user selection / sort, top-to-bottom.
+            for f in files:
                 self.image_list.add_image(f)
         finally:
             self._stop_spinner("Ready")
@@ -445,7 +506,7 @@ class Clip2lGUI:
         self.log(f"Starting processing: {len(selected_files)} file(s)")
         self.log(f"Mode: {'Sequence' if self.sequence_var.get() else 'Individual'}")
         self.log(f"Output: {output_dir}")
-        self.log(f"Width: {width}, Height: {height}")
+        self.log(f"Width: {width}, Height: {height}, Format: {self.format_var.get()}")
         self.log("-" * 60)
 
         # Update UI
@@ -467,12 +528,20 @@ class Clip2lGUI:
     def _process_images(self, files, output_dir, width, height, sequence):
         """Worker function to process images."""
         try:
-            processor = ImageProcessor(width, height)
+            processor = ImageProcessor(
+                width,
+                height,
+                output_format=self.format_var.get(),
+                jpeg_quality=self.jpeg_quality_var.get(),
+                jpeg_subsampling=int(self.jpeg_subsampling_var.get()),
+                jpeg_optimize=self.jpeg_optimize_var.get(),
+                jpeg_progressive=self.jpeg_progressive_var.get(),
+            )
             
             if sequence:
-                generated = processor.process_sequence_list(files, output_dir)
+                generated = processor.process_sequence_list(files, output_dir, output_format=self.format_var.get())
             else:
-                generated = processor.process_image_list(files, output_dir)
+                generated = processor.process_image_list(files, output_dir, output_format=self.format_var.get())
 
             self.log("")
             self.log(f"✓ Processing complete!")
